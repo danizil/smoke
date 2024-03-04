@@ -1,3 +1,6 @@
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 
 
@@ -10,3 +13,6 @@ def sample_points_on_disc(radius, num_points):
     x = r * np.cos(theta)
     y = r * np.sin(theta)
     return np.concatenate((x[:, None], y[:, None]), axis=1)
+
+
+

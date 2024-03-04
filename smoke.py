@@ -1,6 +1,7 @@
 import numpy as np
 import warnings
 from utils import sample_points_on_disc
+import math
 
 def smoke(current_time, prev_time, particles, params):
     '''
@@ -35,7 +36,7 @@ def smoke(current_time, prev_time, particles, params):
     assert drag != tau, "alpha = tau => point discontinutity, not implemented yet."  
     
     # NEW PARTICLES array of new particles: sample initial positions, t_c, and velocity, calculate the acceleration.
-    num_particles_to_create = round(params['particles_per_sec']*t) 
+    num_particles_to_create = math.ceil(params['particles_per_sec']*t ) 
     if num_particles_to_create == 0:
         warnings.warn("number of particles to create is 0, no new particles will be created.")
     
