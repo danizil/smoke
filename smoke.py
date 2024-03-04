@@ -1,14 +1,13 @@
 import numpy as np
+import warnings
 from utils import sample_points_on_disc
 
 def smoke(current_time, prev_time, particles, params):
     '''
     :param: current_time: thecurrenttime[sec](double1-by-1) 2) 
     :param: prev_time: the previous time in[sec](double1-by-1) 
-    :param: particles: struct (dict? DF?) of dimensions [N, 3 (x,y,z), 3](x,v,a):
-        a. X : position [m], velocity [m/sec] and acceleration [m/sec^2] in the x-axis (double 1-by-3)
-        b. Y : same as “X” for the y-axis
-        c. Z : same as “X” for the z-axis
+    :param: particles: np array of dimensions [N, 3 (x,y,z), 3(pos,vel,acc)]:
+        
      :param: params: struct with the fields:
         a. particles_per_sec:  number of particles created every second (double 1-by- )1
         b. ini_vel: theinitialvelocityoftheparticles[m/sec](double1-by-3)
@@ -25,39 +24,105 @@ def smoke(current_time, prev_time, particles, params):
     '''
     
     # constants:
-    g = 9.81 # m/s^2
-    air_viscosity = 1.81e-5 # kg/(m*sec)
-    particle_radius = 10**-6 # meters
-    particle_mass = 10**-15 # kg (calculated for water droplet)
+    assert current_time > prev_time, "current_time <= prev_time"
 
-    alpha = 6*np.pi*air_viscosity*particle_radius/particle_mass
+    g = 9.81 # m/s^2
+    
+    drag = params['drag']
     t = current_time - prev_time
+    tau = params['buoyancy_const']
+    wind_vel = params['wind_vel']
+    assert drag != tau, "alpha = tau => point discontinutity, not implemented yet."  
     
     # NEW PARTICLES array of new particles: sample initial positions, t_c, and velocity, calculate the acceleration.
-    num_particles_to_create = int(params['particles_per_sec']*t)
+    num_particles_to_create = round(params['particles_per_sec']*t) 
+    if num_particles_to_create == 0:
+        warnings.warn("number of particles to create is 0, no new particles will be created.")
+    
     aperture_radius = params['aperture']/2
 
-
-    ceation_times = np.random.uniform(0, t, num_particles_to_create)
+    creation_times = np.random.uniform(0, t, num_particles_to_create) #[N,1]
 
     creation_positions_xy = sample_points_on_disc(aperture_radius, num_particles_to_create)
     creation_positions = np.concatenate((creation_positions_xy, np.zeros((num_particles_to_create, 1))), axis=1) #[N, 3]
     
     creation_velocities = np.random.normal(params['ini_vel'], params['vel_std'], (num_particles_to_create, 3)) #[N, 3]
 
-    creation_bouyancies = np.ones((num_particles_to_create, 1))*params['bouyancy']
+    creation_buoyancies = np.ones(num_particles_to_create)*params['bouyancy']
 
-    # todo: we want to do the same formula for both, accept for the top there are different creation times and the same bouyancy and in the bottom different bouyancies and creation time 0
     #GIVEN PARTICLES: for them you need to calculate the initial bouyancy    
-    existing_positions = particles[:,:,0]
-    existing_velocities = particles[:,:,1]
-    existing_accelerations = particles[:,:,2]
+    # if particles.size == 0:
+    #     particles = np.zeros((0,3,3))
+    existing_positions = particles[:,:,0] #[N,3]
+    existing_velocities = particles[:,:,1] #[N,3]
+    existing_accelerations = particles[:,:,2] #[N,3]
 
-    existing_bouyancies = existing_accelerations[:,2] + g + alpha*existing_velocities[:,2]
-    existing_bouyancies = np.expand_dims(existing_bouyancies, axis=1)
+    existing_buoyancies = existing_accelerations[:,2] + g + drag*existing_velocities[:,2]
+    # existing_bouyancies = existing_bouyancies #[N,1]
 
+    existing_times = np.zeros_like(existing_buoyancies) #[N,1]
+
+    # concatenate creation conditions and creation times
+    tc_list = np.concatenate((creation_times, existing_times), axis=0) #[2N,1]
+
+    all_positions_tc = np.concatenate((creation_positions, existing_positions), axis=0) #[2N,3]
+    all_velocities_tc = np.concatenate((creation_velocities, existing_velocities), axis=0) #[2N,3]
+    all_buoyancies_tc = np.concatenate((creation_buoyancies, existing_buoyancies), axis=0) #[2N,1]
+    all_accelerations_tc = -g + np.expand_dims(all_buoyancies_tc, axis=1) + drag*all_velocities_tc
     
-    
+    # calculate kinematics
+    # init_z = np.expand_dims(all_positions_tc[:,2], axis=-1)
+    # init_vz = np.expand_dims(all_velocities_tc[:,2], axis=-1)
 
-    particles_updated = particles
+    # init_x = np.expand_dims(all_positions_tc[:,0], axis=-1)
+    # init_vx = np.expand_dims(all_velocities_tc[:,0], axis=-1)
+    
+    # init_y = np.expand_dims(all_positions_tc[:,1], axis=-1)
+    # init_vy = np.expand_dims(all_velocities_tc[:,1], axis=-1)
+
+    init_z = all_positions_tc[:,2]
+    init_vz = all_velocities_tc[:,2]
+
+    init_x = all_positions_tc[:,0]
+    init_vx = all_velocities_tc[:,0]
+    
+    init_y = all_positions_tc[:,1]
+    init_vy = all_velocities_tc[:,1]
+
+    all_sigma = tau*all_buoyancies_tc/(1-drag*tau)
+
+    # z
+    z_t = init_z - tau*all_sigma*(np.exp(-(t-tc_list)/tau) - 1) \
+        + 1/drag*(init_vz + g/drag + all_sigma)*(1 - np.exp(-drag*(t-tc_list)))\
+        - g/drag*(t-tc_list)
+
+    vz_t = init_vz*np.exp(-drag*(t-tc_list)) \
+          + all_sigma*(np.exp(-drag*(t-tc_list)) - np.exp(-(t-tc_list)/tau)) \
+          + g/drag*(np.exp(-drag*(t-tc_list)) - 1)
+    
+    az_t = -drag*init_vz*np.exp(-drag*(t-tc_list)) \
+          + all_sigma*(-drag*np.exp(-drag*(t-tc_list)) + 1/tau*np.exp(-(t-tc_list)/tau)) \
+          - g*drag*np.exp(-drag*(t-tc_list))
+    
+    # x
+    x_t = init_x + 1/drag*(init_vx - wind_vel[0])*(1 - np.exp(-drag*(t-tc_list))) \
+        + wind_vel[0]*(t-tc_list)
+    
+    vx_t = wind_vel[0] + (init_vx - wind_vel[0])*np.exp(-drag*(t-tc_list))
+    ax_t = -drag*(init_vx - wind_vel[0])*np.exp(-drag*(t-tc_list)) 
+
+    # y exactly the same as x 
+    y_t = init_y + 1/drag*(init_vy - wind_vel[1])*(1 - np.exp(-drag*(t-tc_list))) \
+        + wind_vel[1]*(t-tc_list)
+    
+    vy_t = wind_vel[1] + (init_vy - wind_vel[1])*np.exp(-drag*(t-tc_list))
+    ay_t = -drag*(init_vy - wind_vel[1])*np.exp(-drag*(t-tc_list))
+
+    # concatenate the results into a tensor of dimensions [2N,3(x,y,z), 3(r, v, a) ]
+    positions_updated = np.stack((x_t, y_t, z_t), axis=1) #[2N,3]
+    velocities_updated = np.stack((vx_t, vy_t, vz_t), axis=1) #[2N,3]
+    accelerations_updated = np.stack((ax_t, ay_t, az_t), axis=1) #[2N,3]
+
+    particles_updated = np.stack((positions_updated, velocities_updated, accelerations_updated), axis=2) #[2N,3,3]
+
     return particles_updated
