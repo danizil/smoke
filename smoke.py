@@ -24,7 +24,6 @@ def smoke(current_time, prev_time, particles, params):
         a_i = -g + a_wind + a_bouyancy = -g + D(v_wind - v_i)^2 
     '''
     
-    # constants:
     assert current_time > prev_time, "current_time <= prev_time"
 
     g = 9.81 # m/s^2
@@ -33,14 +32,14 @@ def smoke(current_time, prev_time, particles, params):
     t = current_time - prev_time
     tau = params['buoyancy_const']
     wind_vel = params['wind_vel']
-    assert drag != tau, "alpha = tau => point discontinutity, not implemented yet."  
+    aperture_radius = params['aperture']/2
+    assert drag != 1/tau, "alpha = tau => point discontinutity, not implemented yet."  
     
     # NEW PARTICLES array of new particles: sample initial positions, t_c, and velocity, calculate the acceleration.
     num_particles_to_create = math.ceil(params['particles_per_sec']*t ) 
     if num_particles_to_create == 0:
         warnings.warn("number of particles to create is 0, no new particles will be created.")
     
-    aperture_radius = params['aperture']/2
 
     creation_times = np.random.uniform(0, t, num_particles_to_create) #[N,1]
 
@@ -52,14 +51,12 @@ def smoke(current_time, prev_time, particles, params):
     creation_buoyancies = np.ones(num_particles_to_create)*params['bouyancy']
 
     #GIVEN PARTICLES: for them you need to calculate the initial bouyancy    
-    # if particles.size == 0:
-    #     particles = np.zeros((0,3,3))
+    
     existing_positions = particles[:, 0, :] #[N,3]
     existing_velocities = particles[:, 1, :] #[N,3]
     existing_accelerations = particles[:, 2, :] #[N,3]
 
     existing_buoyancies = existing_accelerations[:, 2] + g + drag*existing_velocities[:, 2]
-    # existing_bouyancies = existing_bouyancies #[N,1]
 
     existing_times = np.zeros_like(existing_buoyancies) #[N,1]
 
@@ -69,7 +66,6 @@ def smoke(current_time, prev_time, particles, params):
     all_positions_tc = np.concatenate((creation_positions, existing_positions), axis=0) #[2N,3]
     all_velocities_tc = np.concatenate((creation_velocities, existing_velocities), axis=0) #[2N,3]
     all_buoyancies_tc = np.concatenate((creation_buoyancies, existing_buoyancies), axis=0) #[2N,1]
-    all_accelerations_tc = -g + np.expand_dims(all_buoyancies_tc, axis=1) + drag*all_velocities_tc
     
     # calculate kinematics
     
@@ -95,13 +91,14 @@ def smoke(current_time, prev_time, particles, params):
     
     az_t = -drag*init_vz*np.exp(-drag*(t-tc_list)) \
           + all_sigma*(-drag*np.exp(-drag*(t-tc_list)) + 1/tau*np.exp(-(t-tc_list)/tau)) \
-          - g*drag*np.exp(-drag*(t-tc_list))
+          - g*np.exp(-drag*(t-tc_list))
     
     # x
     x_t = init_x + 1/drag*(init_vx - wind_vel[0])*(1 - np.exp(-drag*(t-tc_list))) \
         + wind_vel[0]*(t-tc_list)
     
     vx_t = wind_vel[0] + (init_vx - wind_vel[0])*np.exp(-drag*(t-tc_list))
+    
     ax_t = -drag*(init_vx - wind_vel[0])*np.exp(-drag*(t-tc_list)) 
 
     # y exactly the same as x 
@@ -112,11 +109,11 @@ def smoke(current_time, prev_time, particles, params):
     ay_t = -drag*(init_vy - wind_vel[1])*np.exp(-drag*(t-tc_list))
 
     # concatenate the results into a tensor of dimensions [N, 3(pos,vel,acc), 3(x,y,z)]
+    
     positions_updated = np.stack((x_t, y_t, z_t), axis=1) #[N,3]
     velocities_updated = np.stack((vx_t, vy_t, vz_t), axis=1) #[N,3]
     accelerations_updated = np.stack((ax_t, ay_t, az_t), axis=1) #[N,3]
 
     particles_updated = np.stack((positions_updated, velocities_updated, accelerations_updated), axis=1) #[N,3,3]
 
-    buoyancies_updated = all_buoyancies_tc*np.exp(-(t-tc_list)/tau)
     return particles_updated
